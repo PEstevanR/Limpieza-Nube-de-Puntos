@@ -27,12 +27,13 @@ def main():
     if not entities or len(entities) > 1:
         raise RuntimeError("Please select one point cloud")
 
-    point_cloud = entities[0] # primer objeto ccPointCloud
-    if not isinstance(point_cloud, pycc.ccPointCloud):
+    cloud = entities[0] # primer objeto ccPointCloud
+    if not isinstance(cloud, pycc.ccPointCloud):
         raise RuntimeError("Selected entity should be a point cloud")
 
     #de objeto ccPointCloud a ndarray(x y z) numpy
-    xyz = point_cloud.points()
+    xyz = cloud.points()
+
 
 #2-)
 #DBSCAN
@@ -44,12 +45,12 @@ def main():
 #3-)
 #Añadir campo escalar a la nube de puntos
     scalar_fields: list[str] = []
-    for i in range(point_cloud.getNumberOfScalarFields()):
-        scalar_fields.append(point_cloud.getScalarFieldName(i))
+    for i in range(cloud.getNumberOfScalarFields()):
+        scalar_fields.append(cloud.getScalarFieldName(i))
 
     #campo escalar de nombre DBSCAN_clusters
     if 'DBSCAN_clusters' not in scalar_fields:
-        idx=point_cloud.addScalarField("DBSCAN_clusters", clusters)
+        idx=cloud.addScalarField("DBSCAN_clusters", clusters)
     else:
         raise RuntimeError("ScalarField 'DBSCAN_clusters' already exists")
 
