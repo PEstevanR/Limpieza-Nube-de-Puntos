@@ -12,7 +12,7 @@ Proceso:
         3-)Se añade la nube de puntos voxelizada a cloudcompare
 Resultado:
         Se consigue voxelizar y renderizar la nube de puntos en la GUI de cloudCompare.
-        Se obtiene nube de puntos homogenia
+        Se obtiene nube de puntos homogénia
 """
 
 def main():
@@ -39,7 +39,7 @@ def main():
 #2-)
 #Voxelizacion
     #tamaño de voxel
-    res=0.01
+    res=0.25
     voxelated_cloud, vox_to_cloud_ind, cloud_to_vox_ind = dm.voxelate(cloud=xyz, resolution_xy=res, resolution_z=res, with_n_points=False)
 
     x = voxelated_cloud[:,0]

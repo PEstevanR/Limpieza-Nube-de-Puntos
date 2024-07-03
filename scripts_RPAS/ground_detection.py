@@ -3,24 +3,29 @@
 #=============================================================================================
 """
 Objetivo:
-        filtrar los puntos que son de terreno (ground points) para generar curvas de nivel
+        Generar una superficie de comparación para filtrar puntos de terreno (ground points) en nubes de puntos
+        obtenidas mediante técnicas de fotogrametría aérea con imágenes capturadas con RPAS
 
 Proceso:
         1-)Cargar la nube de puntos seleccionada en CloudCompare
 
-        2-)Reducción de puntos al 50% de forma aleatoria, para hacer más agil el procesamiento de datos
+        2-)Remuestreo de la nube de puntos a 1 punto cada 10cm en las 3 dimensiones
 
-        3-)Reducción de ruido con el filtro 'filter_noise' de cloudcompare
+        3-)Reducción de puntos al 50% de la nube remuestreada
 
-        4-)Obtención de información espectral a partir de los campos escalares RGB
+        4-)Conversión de la nube de puntos a ndarray de numpy de la forma (x,y,z,globalScalarFields)
 
-        5-)Filtrado espectral empleando los indices ExG y Brightness
+        5-)Filtro (GEOMETRICO) de puntos terreno con el algoritmo Cloth Simulation Filter (CSF) en celdas de 50m
 
-        6-)Segmentación de la nube de puntos por celdas de paso 50m
+        6-)Cálculo de índices espectrales para cada punto con los campos escalares RGB
 
-        7-)Filtrado geométrico de puntos de terreno natural con el algoritmo Cloth Simulation Filter (CSF)
+        7-)Cálculo de características geométricas basadas en el vecindario de cada punto (15 vecinos más cercanos)
 
-        8-)Carga de nubes de puntos a CloudCompare
+        8-)Clasificación no supervisada con base en características espectrales y características geométricas (algoritmo GMM)
+
+        9-)Proceso de creación de malla de comparación
+
+        10-)Carga de datos a CloudCompare
 
 Resultado:
 """
@@ -40,279 +45,179 @@ import pycc
 import cccorelib
 
 #otros
+import time
 import numpy as np
-from sklearn.mixture import GaussianMixture
-from sklearn.preprocessing import RobustScaler
+import dendromatics as dm
+from scipy.spatial import Delaunay
+
 
 #Importación de funciones propias
 from utils.utilities import getCloud, getCellPointCloud, mergePointClouds, makePyccPointCloudObject
-from utils.utilities import filterCSF, getCloudAsArray, getSpectralInfo, getGeometricalInfo
-
+from utils.utilities import filterCSF, getCloudAsArray, getSpectralInfo, getGeometricalInfo, GMM_clustering
 
 
 #Aqui inicia la ejecución del código
-if __name__=="__main__":
+if __name__ == "__main__":
 
-    print("Inicio de ejecución")
+    global_start = time.time()
+    print('Inicio del proceso de obtención de puntos terreno')
 
-#1-)cargamos los datos desde CloudCompare
+
+#1-)
+    #============================================================================================
+    #===========================carga de los datos desde CloudCompare============================
+    #============================================================================================
     cc, point_cloud, _ = getCloud()
 
-#2-)reducción de puntos al 50%
-    reduccion = point_cloud.size()//2
-    subsample = cccorelib.CloudSamplingTools.subsampleCloudRandomly(cloud=point_cloud, newNumberOfPoints=reduccion)
-    random_subsample_cloud = point_cloud.partialClone(subsample)
-    #random_subsample.setName('subsample 50%')
-    #cc.addToDB(random_subsample)
+
+#2-)
+    #============================================================================================
+    #==========Remuestreo de la nube de puntos a 1 punto cada 10cm en las 3 dimensiones==========
+    #============================================================================================
+    distance = 0.1
+    ref_subsample = cccorelib.CloudSamplingTools.resampleCloudSpatially(cloud=point_cloud,
+                                                                        minDistance= distance,
+                                                                        modParams=cccorelib.CloudSamplingTools.SFModulationParams(False),
+                                                                        progressCb=pycc.ccProgressDialog().start())
+    spatial_subsample_cloud = point_cloud.partialClone(ref_subsample)
+    #spatial_subsample_cloud.setName('spatially subsample 10cm')
+    #cc.addToDB(spatial_subsample_cloud)
+    del point_cloud
 
 
-#3-)Eliminación de ruido
-    #refcloud_2 = cccorelib.CloudSamplingTools.sorFilter(cloud=random_subsample, knn=6, nSigma=1.0)
-    noisefilter = cccorelib.CloudSamplingTools.noiseFilter(cloud=random_subsample_cloud,
-                                                          kernelRadius=0.1,
-                                                          nSigma=1.0,
-                                                          removeIsolatedPoints = True,
-                                                          useKnn = False,
-                                                          useAbsoluteError=False,
-                                                          )
-    denoised_cloud = random_subsample_cloud.partialClone(noisefilter)
-    #denoised_cloud.setName('filtro de ruido')
-    #cc.addToDB(denoised_cloud)
+#3-)
+    #============================================================================================
+    #=====================Reducción de puntos al 50% de la nube remuestreada=====================
+    #============================================================================================
+    percent = 0.5
+    reduccion = int(np.ceil(spatial_subsample_cloud.size()*percent))
+    ref_subsample = cccorelib.CloudSamplingTools.subsampleCloudRandomly(cloud=spatial_subsample_cloud,
+                                                                        newNumberOfPoints=reduccion,
+                                                                        progressCb=pycc.ccProgressDialog().start())
+    random_subsample_cloud = spatial_subsample_cloud.partialClone(ref_subsample)
+    #random_subsample_cloud.setName('random subsample 50%')
+    #cc.addToDB(random_subsample_cloud)
+    del spatial_subsample_cloud
 
 
-#4-)Conversión de la nube depuntos a ndarray numpy (x,y,z,globalScalarFields)
-    cloudAsArray, globalScalarFieldsNames = getCloudAsArray(denoised_cloud)
+
+#4-)
+    #============================================================================================
+    #=======Conversión de la nube de puntos a ndarray de numpy (x,y,z,globalScalarFields)========
+    #============================================================================================
+    start = time.time()
+    cloudAsArray, globalScalarFieldsNames = getCloudAsArray(random_subsample_cloud)
+    stop = time.time()
+    elapsed_time = (stop-start)/60
+    print(f'Tiempo transcurrido para conversión de nube de puntos a ndarray de numpy: {elapsed_time:.2f} min')
+    del random_subsample_cloud
 
 
-#5-)Segmentación de la nube de puntos por celdas
+
+#5-)
+    #============================================================================================
+    #===Filtrado geométrico de puntos terreno -Cloth Simulation Filter (CSF)- en celdas de 50m===
+    #============================================================================================
+    start = time.time()
     cell_size = 50
-    cells, cellPointCloud = getCellPointCloud(cloudAsArray, cell_size)
+    _, cellPointCloud = getCellPointCloud(cloudAsArray, cell_size)
+    del cloudAsArray
 
-    print("segmentacion hecha")
-
-#6-)filtro (GEOMETRICO) de puntos terreno con Cloth Simulation Filter (CSF) en cada celda
-    #parametros del algoritmo
+    #parametros del algoritmo CSF
     smooth = True     # manejar pendientes pronunciadas después de la simulación
     threshold = 0.5   # umbral de clasificación puntos terreno y no terreno
     resolution = 0.5  # resolución de la tela
-    rigidness = 2     # 1)montaña y vegetacion densa, 2)escenas complejas, 3)terrenos planos con edificios altos
-    interations = 500 # numero de iteraciones
+    rigidness = 2     # 1)montaña y vegetación densa, 2)escenas complejas, 3)terrenos planos con edificios altos
+    interations = 500 # número de iteraciones
     params = [smooth, threshold, resolution, rigidness, interations]
-    ground_csf, n_ground_csf = filterCSF(cellPointCloud, params)
+    ground_csf, _ = filterCSF(cellPointCloud, params)
 
-    print("filtrado geométrico hecho")
+    stop = time.time()
+    elapsed_time = (stop-start)/60
+    print(f'Tiempo transcurrido en filtrado geométrico (CSF): {elapsed_time:.2f} min')
+    del cellPointCloud
 
 
-#7-)Clasificación no supervisada con base en índices espectrales de vegetación (algoritmo GMM - Gaussian Mixture Model)
 
-    #se calculan índices espectrales
+#6-)
+    #============================================================================================
+    #===================Cálculo de índices espectrales con campos escalares RGB==================
+    #============================================================================================
+    start = time.time()
     cloud_espectralInfo, globalScalarFieldsNames = getSpectralInfo(cloud=ground_csf, scalarfields=globalScalarFieldsNames)
-
-    #se calculan caracteristicas geométricas basadas en vecindarios
-    cloud_geometricalInfo, globalScalarFieldsNames = getGeometricalInfo(cloud=cloud_espectralInfo, scalarfields=globalScalarFieldsNames, d=0.5)
-
-    #segmentamos a celdas de 25m para evitar ruido en el clasificador GMM
-    cell_size = 25
-    _, cellPointCloud2 = getCellPointCloud(cloud_geometricalInfo, cell_size)
-
-    #lista vacía para almacenar las nubes de puntos una vez clasificadas
-    clouds_clas = []
-
-    #clasificamos a nivel de cada celda
-    for cloud in cellPointCloud2:
-
-        #nubes de puntos con menos de 10 puntos las saltamos
-        if cloud.shape[0] < 10 or cloud is None:
-            continue
-
-        #comprobación de la NO existencia de valores nulos o infinitos en los datos para la clasificación
-        #valores nulos
-        if np.isnan(cloud).sum() > 0:
-            indices_nulos = np.any(np.isnan(cloud), axis=1)
-            cloud = cloud[~indices_nulos]
-        #valores infinitos
-        if np.isinf(cloud).sum() > 0:
-            indices_inf = np.any(np.isinf(cloud), axis=1)
-            cloud = cloud[~indices_inf]
-
-        #nubes de puntos con menos de 10 puntos las saltamos
-        if cloud.shape[0] < 10:
-            continue
-
-        #==================================Proceso de clasificación==================================
-        #A-)definción de las caracteristicas para la clasificación
-            #Si la nube de puntos no esta coloreada en RGB, se utilizará para la clasificacion los campos escalares
-            #Intensity, Return Number, n_vec, dist_mean', dist_std, Z_std, sum_eigenvalues, omnivarianza, eigenentropy,
-            #anisotropy, planarity, linearity, surface_variation y sphericity
-        attributes_names = ['Intensity', 'Return Number', 'Red', 'Green', 'Blue', 'ExG', 'EXG', 'EXR', 'vNDVI', 'Brightness', 'CIVE', 'GLI',
-                            'SAVI', 'VARI', 'GR', 'NBRDI', 'NGBDI', 'NGRDI', 'NormG', 'RGRI', 'n_vec', 'NGRDI_mean', 'NGRDI_std', 'dist_mean',
-                            'dist_std', 'Z_std', 'sum_eigenvalues', 'omnivarianza', 'eigenentropy', 'anisotropy', 'planarity', 'linearity',
-                            'surface_variation', 'sphericity']
-        existingAttributes = [name for name in  attributes_names if name in globalScalarFieldsNames]
-        num_attributes = len(existingAttributes)
-
-        #array vacio que contendrá la nube de puntos solo con los campos escalares para la clasificación
-        attributes_array = np.empty((cloud.shape[0], num_attributes))
-
-        #llena el attributes_array con los valores de los campos escalares attributes_names
-        for col_index, name in enumerate(existingAttributes):
-            idx = globalScalarFieldsNames.index(name) + 3  # +3 porque las 3 primeras posiciones son las coordenadas x,y,z en la nube de puntos inicial (Cloud)
-            attributes_array[:, col_index] = cloud[:, idx]
-
-        #B-)escalado de caracteristicas para un mejor funcionamiento del algoritmo de clasificación
-        scaler = RobustScaler()
-        scaled_features = scaler.fit_transform(attributes_array)
-
-        #C-)clasificación
-        #Gaussian Mixture Model Clustering
-        #Covarianza tipo full: cada cluster tiene su propia matriz de covarianza general
-        gmm = GaussianMixture(n_components=4, covariance_type='full', random_state=42)
-        gmm.fit(scaled_features)
-
-        #obtener las probabilidades de pertenencia de cada punto a cada cluster
-        probabilities = gmm.predict_proba(scaled_features)
-
-        #determinar la probabilidad máxima y la clase correspondiente para cada punto
-        max_probabilities = np.max(probabilities, axis=1)
-        labels_gmm = np.argmax(probabilities, axis=1)
-
-        #añadimos la clase predicha y la probabilidad de pertenencia a la clase en la nube de puntos inicial
-        #añadimos los nombres de los campos escalares a la lista de nombres
-        cloud = np.column_stack((cloud, labels_gmm, max_probabilities))
-
-        #D-)filtrado de puntos por probabilidades y por número de cluster
-        #definimos un umbral de probabilidad mínima para descartar puntos con una mala asignación a una clase
-        mask = cloud[:,-1] >= 0.6 #p.e 60%
-        cloud_ground_cluster = cloud[mask]
-
-        ##############################################################
-        ##########################PRUEBAS#############################
-        if "Label_GMM" not in globalScalarFieldsNames and "Probabilities_GMM" not in globalScalarFieldsNames:
-            globalScalarFieldsNames.append("Label_GMM")
-            globalScalarFieldsNames.append("Probabilities_GMM")
-        cloud = [makePyccPointCloudObject(cloud_ground_cluster, globalScalarFieldsNames, "Clustering")]
-        merged_cloud= mergePointClouds(cloud, name_merge='Clustering')
-        merged_cloud.setCurrentDisplayedScalarField(merged_cloud.getScalarFieldIndexByName("Zcoord"))
-        cc.addToDB(merged_cloud)
-
-        #añadimos la nube de puntos clasificada a la lista de nubes de puntos clasificadas
-        #clouds_clas.append(cloud_ground_cluster)
-
-    print("Clasificación hecha")
-    """
-    #actualizando la lista de nombres de los campos escalares
-    #globalScalarFieldsNames = scalarFieldsNames
-    globalScalarFieldsNames.append("Label_GMM")
-    globalScalarFieldsNames.append("Probabilities_GMM")
-
-    #uniendo los segmentos de nubes de puntos clasificados en un solo array de numpy
-    #array numpy vacio con el mismo número de columnas que el de las nubes de puntos clasificadas
-    f = clouds_clas[0].shape[1]
-    ground_gmm = np.empty((0,f))
-
-    #iterando sobre la lista de nubes de puntos clasificadas
-    for cloud in clouds_clas:
-        ground_gmm = np.vstack((ground_gmm, cloud))
-
-    #eliminando puntos duplicados con base en las coordenadas x,y,z
-    _, unique_indices = np.unique(ground_gmm[:, :3], axis=0, return_index=True)
-    ground_gmm = ground_gmm[unique_indices]
-
-
-    cloud = [makePyccPointCloudObject(ground_gmm, globalScalarFieldsNames, "Clustering")]
-    merged_cloud= mergePointClouds(cloud, name_merge='Clustering')
-    merged_cloud.setCurrentDisplayedScalarField(merged_cloud.getScalarFieldIndexByName("Zcoord"))
-    cc.addToDB(merged_cloud)
+    stop = time.time()
+    elapsed_time = (stop-start)/60
+    print(f'Tiempo transcurrido para calcular características espectrales: {elapsed_time:.2f} min')
+    del ground_csf
 
 
 
+#7-)
+    #============================================================================================
+    #========Cálculo de características geométricas basadas en el vecindario de cada punto=======
+    #============================================================================================
+    start = time.time()
+    n=15 #15 vecinos más cercanos
+    cloud_geometricalInfo, globalScalarFieldsNames = getGeometricalInfo(cloud=cloud_espectralInfo, globalScalarfields=globalScalarFieldsNames, n=n)
+    stop = time.time()
+    elapsed_time = (stop-start)/60
+    print(f'Tiempo transcurrido para calcular características geométricas: {elapsed_time:.2f} min')
+    del cloud_espectralInfo
 
 
-    
-#8-)Generación de malla 3D
 
-    a = pycc.ccMesh()
-    cccorelib.Delaunay2dMesh.buildMesh()
-    a.#(cccorelib.TRIANGULATION_TYPES.DELAUNAY_2D_AXIS_ALIGNED, dim=2)
+#8-)
+    #============================================================================================
+    #==============Clasificación no supervisada (algoritmo Gaussian Mixture Model)===============
+    #============================================================================================
+    start = time.time()
+    cell_size = 15 #ventana de análisis
+    cloud_ground_gmm, globalScalarFieldsNames = GMM_clustering(cloud_geometricalInfo, globalScalarFieldsNames, cell_size)
+    stop = time.time()
+    elapsed_time = (stop-start)/60
+    print(f'Tiempo transcurrido en el proceso de clustering: {elapsed_time:.2f} min')
+    del cloud_geometricalInfo
 
-    mesh1 = cc.ccMesh.triangulate(cloud1, cc.TRIANGULATION_TYPES.DELAUNAY_2D_AXIS_ALIGNED, dim=2)
-    mesh1.setName("mesh1")
-    """
 
-#9-)Carga de nubes de puntos a CloudCompare
-    cc_ground_clouds = [makePyccPointCloudObject(ground_csf, scalarFieldsNames, "Ground points")]
-    cc_n_ground_clouds = [makePyccPointCloudObject(n_ground_csf, scalarFieldsNames, "Non Ground points")]
 
-    #union de nubes de puntos
-    #ground points
-    merged_ground_points= mergePointClouds(cc_ground_clouds, name_merge='Ground points')
-    merged_ground_points.setCurrentDisplayedScalarField(merged_ground_points.getScalarFieldIndexByName("Zcoord"))
+#9-)
+    #============================================================================================
+    #========================Proceso de creación de malla de comparación=========================
+    #============================================================================================
+    start = time.time()
 
-    #no ground points
-    merged_n_ground_points= mergePointClouds(cc_n_ground_clouds, name_merge='Non Ground points')
-    merged_n_ground_points.setCurrentDisplayedScalarField(merged_n_ground_points.getScalarFieldIndexByName("Zcoord"))
+    #triangulación de Delaunay e índices de los triángulos
+    indices = Delaunay(cloud_ground_gmm[:,:2]).simplices
 
-    #resultado a cloudcompare
-    cc.addToDB(merged_ground_points)
-    cc.addToDB(merged_n_ground_points)
+    # creación de malla
+    pc = makePyccPointCloudObject(cloud_ground_gmm, globalScalarFieldsNames, "ground_points")
+    mesh = pycc.ccMesh(pc)
+    for (i1, i2, i3) in indices:
+        mesh.addTriangle(i1, i2, i3)
+    mesh.setName("mesh_ground_points")
+
+    stop = time.time()
+    elapsed_time = (stop-start)/60
+    print(f'Tiempo transcurrido en el proceso de generación de malla: {elapsed_time:.2f} min')
+
+
+
+#10-)
+    #============================================================================================
+    #===============================Carga de datos a CloudCompare================================
+    #============================================================================================
+    ground_cloud= mergePointClouds([pc], name_merge='ground_points')
+    ground_cloud.setCurrentDisplayedScalarField(ground_cloud.getScalarFieldIndexByName("Zcoord"))
+
+    cc.addToDB(ground_cloud)
+    cc.addToDB(mesh)
+
+    global_end = time.time()
+    elapsed_time = (global_end- global_start)/60
+    print(f'Tiempo transcurrido durante todo el proceso: {elapsed_time:.2f} min')
+
+    #actualizar la GUI de CloudCompare
     cc.updateUI()
 
-    """
-    #====================================================
-    #Para visualizar las celdas en CloudCompare
-    #====================================================
-    grid = pycc.ccPointCloud()
-    for cell in cells:
-        for point in cell:
-            grid.addPoint(cccorelib.CCVector3(point[0], point[1], 0))
-    grid.setName("Grid")
-    cc.addToDB(grid)
-    #====================================================
-    #====================================================
-    """
 
 
-    #del cc, point_cloud, random_subsample_cloud, denoised_cloud, xyz, ground_csf, n_ground_csf,
-
-
-    print("PROCESO FINALIZADO")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    """
-#5-)filtro (ESPECTRAL) basado en los campos escalares Brightness y ExG
-    if 'Brightness' in scalar_fields and 'ExG' in scalar_fields:
-        #umbrales
-        umbral_ExG = 25
-        umbral_Brightness = [50,150]
-        idx1 = list(scalar_fields).index('Brightness')+3
-        idx2 = list(scalar_fields).index('ExG')+3
-
-        #filtro 1: Brightness <= 50 ó Brightness>=150 (sombras y terreno)
-        mask_ground = np.logical_or(xyz[:,idx1] <= umbral_Brightness[0], xyz[:,idx1] >= umbral_Brightness[1])
-        mask_n_ground = np.logical_not(mask_ground)
-        ground_points_1 = xyz[mask_ground]
-        n_ground_points_1 = xyz[mask_n_ground]
-
-        #filtro 2: ExG <= 25 (terreno)
-        mask_ground = ground_points_1[:,idx2] <= umbral_ExG
-        mask_n_ground = np.logical_not(mask_ground)
-        n_ground_points_2 = ground_points_1[mask_n_ground]
-
-        #Resultado
-        ground_points = ground_points_1[mask_ground]
-        n_ground_points =  np.vstack((n_ground_points_1, n_ground_points_2))
-
-    print("filtrado espectral hecho")
-    """

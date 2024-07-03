@@ -13,7 +13,7 @@ Proceso:
         2-)Obtenemos un mallado de tamaño 'cell_size' en todo el conjunto de datos
 
         3-)Aplicamos PCA al conjunto de puntos contenidos en cada celda de la malla y asignamos la direccion a cada punto
-        como la direccion de máxima variación de los datos (direccion del autovector del CP1)
+        como la dirección de máxima variación de los datos (direccion del autovector del CP1)
 
 Resultado:
         -se consigue el objetivo propuesto, pero pueden existir problemas de calculo a la hora de aplicar PCA

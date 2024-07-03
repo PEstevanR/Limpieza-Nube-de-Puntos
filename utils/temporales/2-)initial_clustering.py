@@ -13,7 +13,7 @@ Proceso:
         3-)Añadir campo escalar a la nube de puntos con id de clusters.
 
 Resultado:
-        Proceso muy lento mirar otras alternativas, no se sabe en que clusters quedan incluidos los puntos de ruido
+        Proceso muy lento mirar otras alternativas
 """
 
 

@@ -41,8 +41,6 @@ from utils.utilities import getCloud, getCellPointCloud, mergePointClouds
 from utils.utilities import getTrackPoints, customRansac
 
 
-
-
 #Aqui inicia la ejecución del código
 if __name__=="__main__":
 #1-)
@@ -52,7 +50,7 @@ if __name__=="__main__":
 #3-)
     track_clouds = getTrackPoints(clouds)
 
-#Para visualizar en cloudcompare
+#4-)Ajustamos localmente con RANSAC para obtener inliers
     clouds =[]
     for track_points in track_clouds:
         #Ajuste RANSAC
@@ -70,6 +68,7 @@ if __name__=="__main__":
             pc.setCurrentDisplayedScalarField(pc.getScalarFieldIndexByName("RANSAC Direction"))
             clouds.append(pc)
 
+    #Para visualizar en cloudcompare
     merged_cloud = mergePointClouds(clouds, name_merge='RANSAC_inliers')
     merged_cloud.setCurrentDisplayedScalarField(merged_cloud.getScalarFieldIndexByName("RANSAC_direction"))
     cc.addToDB(merged_cloud)
@@ -86,6 +85,9 @@ if __name__=="__main__":
     cc.addToDB(grid)
     #====================================================
     #====================================================
+
+#5-)reconstrucción de railes y eje de via (...en proceso de desarrollo)
+
     print("PROCESO FINALIZADO")
 
 
