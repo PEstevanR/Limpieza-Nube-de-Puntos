@@ -85,7 +85,7 @@ def getCloudAsArray(cloud):
         if field_name not in aux_dict.keys():
             aux_dict[field_name] = cloud.getScalarField(idx).asArray()
 
-    #si la nube de puntos esta colorizada en RGBA, se recupera cada 'color' como un campo escalar
+    #si la nube de puntos esta coloreada en RGBA, se recupera cada 'color' como un campo escalar
     if cloud.colors() is not None:
         aux_dict['Red'], aux_dict['Green'], aux_dict['Blue'], _ = cloud.colors().T
 
@@ -407,31 +407,31 @@ def customRansac(cloud):
 def getTrackPoints(clouds):
     """
     _summary_:
-        Filtrar los puntos de carril presentes en una nube de puntos
+        Filtrar los puntos de carril de vias ferreas presentes en una nube de puntos
     Args:
-        clouds(list): lista con nubes de puntos ndarray(x,y,z)
+        clouds(list): lista con nubes de puntos de la forma ndarray(x,y,z,scalarfields)
     Returns:
-        track_clouds(list): lista con nubes de puntos ndarray(x,y,z) potencialmente de carril
+        track_clouds(list): lista con nubes de puntos de la forma ndarray(x,y,z, scalarfields)
     """
     #Init
-    #comprobando la existencia de puntos
+    #comprobando los datos de entrada
     if len(clouds) == 0 or not isinstance(clouds, list):
         raise RuntimeError("la entrada debe ser una lista de nube de puntos no vacía")
 
     # lista de salida
     track_clouds = []
     for cell_points in clouds:
-        #Trabajamos con celdas que tengan mas de 20 puntos (esto puede cambiarse)
+        #Trabajamos con celdas que tengan más de 20 puntos (esto puede cambiarse)
         if cell_points.shape[0] > 20:
             #Percentil 10% de altura en cada celda
             mdt = getPercentil(cell_points[:, 2], 10)
 
             ##Condicion 1
-            #Verificacion de que menos del 10% de puntos se situen entre mdt+0.5 y mdt+4.5
+            #Verificación de que menos del 10% de puntos se situen entre mdt+0.5 y mdt+4.5
             mask_1 = np.where((cell_points[:, 2] >= mdt+0.5) & (cell_points[:, 2] <= mdt+4.5))
             condition1 = (cell_points[mask_1].shape[0] / cell_points.shape[0])*100 #Porcentaje de puntos entre [mdt+0.5 , mdt+4.5]
             if condition1 < 10.0:
-                #En las celdas que cumplen la condicion, se filtran los puntos del terreno (z < mdt+0.5)
+                #En las celdas que cumplen la condición, se filtran los puntos del terreno (z < mdt+0.5)
                 mask_2 = np.where((cell_points[:, 2] < mdt+0.5))
                 ground_points = cell_points[mask_2]
 
@@ -448,11 +448,11 @@ def getTrackPoints(clouds):
 
             ##Condicion 3
                     #Si los puntos que estan entre (p98-0.10 , p98) son menos del 50% respecto a los ground_points,
-                    #estos puntos son potencialemnte puntos de riel
+                    #estos puntos son potencialmente puntos de riel
                     condition3 = (track_points.shape[0] / ground_points.shape[0])*100
                     if condition3 < 50:
-                        #nos quedamos con las celdas con mas de 20 puntos
-                        if track_points.shape[0] > 20:
+                        #nos quedamos con las celdas con más de 10 puntos
+                        if track_points.shape[0] > 10:
                             track_clouds.append(track_points)
     return track_clouds
 
@@ -794,7 +794,7 @@ def getGeometricalInfo(cloud, globalScalarfields, n):
 
 #Clsificación no supervisada con GMM
 #@numba.njit no compatible con RobustScaler y GaussianMixture
-def GMM_clustering(cloud, globalScalarFieldsNames, cell_size):
+def clusteringGMM(cloud, globalScalarFieldsNames, cell_size):
     """
     _summary_:
         Esta función realiza una clasificación no supervisada de la nube de puntos en 3 clusters

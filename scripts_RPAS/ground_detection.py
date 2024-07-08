@@ -47,13 +47,12 @@ import cccorelib
 #otros
 import time
 import numpy as np
-import dendromatics as dm
 from scipy.spatial import Delaunay
 
 
 #Importación de funciones propias
-from utils.utilities import getCloud, getCellPointCloud, mergePointClouds, makePyccPointCloudObject
-from utils.utilities import filterCSF, getCloudAsArray, getSpectralInfo, getGeometricalInfo, GMM_clustering
+from utils.utilities import getCloud, getCellPointCloud, makePyccPointCloudObject
+from utils.utilities import getCloudAsArray, filterCSF, getSpectralInfo, getGeometricalInfo, clusteringGMM
 
 
 #Aqui inicia la ejecución del código
@@ -172,7 +171,7 @@ if __name__ == "__main__":
     #============================================================================================
     start = time.time()
     cell_size = 15 #ventana de análisis
-    cloud_ground_gmm, globalScalarFieldsNames = GMM_clustering(cloud_geometricalInfo, globalScalarFieldsNames, cell_size)
+    cloud_ground_gmm, globalScalarFieldsNames = clusteringGMM(cloud_geometricalInfo, globalScalarFieldsNames, cell_size)
     stop = time.time()
     elapsed_time = (stop-start)/60
     print(f'Tiempo transcurrido en el proceso de clustering: {elapsed_time:.2f} min')
@@ -186,13 +185,13 @@ if __name__ == "__main__":
     #============================================================================================
     start = time.time()
 
-    #triangulación de Delaunay e índices de los triángulos
-    indices = Delaunay(cloud_ground_gmm[:,:2]).simplices
+    #triangulación de Delaunay
+    faces = Delaunay(cloud_ground_gmm[:,:2]).simplices
 
     # creación de malla
     pc = makePyccPointCloudObject(cloud_ground_gmm, globalScalarFieldsNames, "ground_points")
     mesh = pycc.ccMesh(pc)
-    for (i1, i2, i3) in indices:
+    for (i1, i2, i3) in faces:
         mesh.addTriangle(i1, i2, i3)
     mesh.setName("mesh_ground_points")
 
@@ -201,15 +200,12 @@ if __name__ == "__main__":
     print(f'Tiempo transcurrido en el proceso de generación de malla: {elapsed_time:.2f} min')
 
 
-
 #10-)
     #============================================================================================
     #===============================Carga de datos a CloudCompare================================
     #============================================================================================
-    ground_cloud= mergePointClouds([pc], name_merge='ground_points')
-    ground_cloud.setCurrentDisplayedScalarField(ground_cloud.getScalarFieldIndexByName("Zcoord"))
-
-    cc.addToDB(ground_cloud)
+    pc.setCurrentDisplayedScalarField(pc.getScalarFieldIndexByName("Zcoord"))
+    cc.addToDB(pc)
     cc.addToDB(mesh)
 
     global_end = time.time()
