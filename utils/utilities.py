@@ -12,30 +12,31 @@ from sklearn.linear_model import RANSACRegressor
 
 """
 Utilities.py es la biblioteca de métodos o funciones que se han ido desarrollando
-para la limpieza de nubes de puntos de ferrocarril y RPAS; con el objetivo de luego
-pasar todas las funcionalidades a una programación orientada a objetos.
+para la limpieza de nubes de puntos de ferrocarril y RPAS. La idea es que todos estos métodos
+se pasen a una programación orientada a objetos.
 """
+
 #==============================================================================================================
 #=======================================Funciones de proposito general=========================================
 #==============================================================================================================
 
-#obtener nube de puntos desde cloudcompare
+
 #@numba.njit no compatible con pycc
 def getCloud():
     """
     _summary_:
         Permite leer la nube de puntos seleccionada en CloudCompare y obtener el objeto cc para interactuar con CloudCompare
     Args:
-
+        ninguno
     Returns:
-        cc (pycc.ccPythonInstance()): objeto para interactuar con CloudCompare
+        cc (pycc.ccPythonInstance): objeto para interactuar con CloudCompare
         point_cloud(pycc.ccPointCloud): nube de puntos como objeto de CloudCompare
-        cloud_ndarray(array): array numpy de la forma (x,y,z)
+        cloud_ndarray(array): nube de puntos como array numpy de la forma (x,y,z)
     """
-    # para interactuar con los datos seleccionados en CloudCompare, devuelve un objeto pycc.ccPythonInstance()
+    # para interactuar con los datos seleccionados en CloudCompare
     cc = pycc.GetInstance()
 
-    # de CloudCompare a objeto ccPointCloud
+    # pasando de CloudCompare a objeto ccPointCloud
     entities = cc.getSelectedEntities() #Lista de objetos ccPointCloud
     if not entities or len(entities) > 1:
         raise RuntimeError("Seleccione una nube de puntos")
@@ -44,10 +45,10 @@ def getCloud():
     if not isinstance(point_cloud, pycc.ccPointCloud):
         raise RuntimeError("La entidad seleccionada debe ser una nube de puntos")
 
-    # de objeto ccPointCloud a ndarray(x y z) numpy
+    # pasando de objeto ccPointCloud a array(x y z)
     xyz_CloudCompare = point_cloud.points()
 
-    # copia de la nube de puntos original
+    # copia de la nube de puntos original para hacerla manipulable
     cloud_ndarray = xyz_CloudCompare.copy()
     cloud_ndarray.flags.writeable = True #ndarray writeable
     return cc, point_cloud, cloud_ndarray
@@ -58,29 +59,27 @@ def getCloud():
 def getCloudAsArray(cloud):
     """
     _summary_:
-        Obtención de la nube de puntos como un ndarray numpy con todos los campos escalares
+        Obtención de la nube de puntos como un array numpy con todos los campos escalares
     Args:
         cloud(pycc.ccPointCloud): nube de puntos como objeto de CloudCompare
     Returns:
-        xyz(array): array numpy de la forma (x,y,z, scalarfields)
-        scalarFiledsNames(list): nombre de campos escalares
+        xyz(array): nube de puntos como array numpy de la forma (x,y,z, scalarfields)
+        scalarFiledsNames(list): nombre de campos escalares de la nube de puntos
     """
     #Init
     if not isinstance(cloud, pycc.ccPointCloud):
         raise RuntimeError("La nube de puntos de entrada debe ser una instance de pycc.ccPointCloud")
 
     #se pasa la nube de puntos a un array de numpy
-    xyz = cloud.points() #ndarray(x,y,z)
+    xyz = cloud.points() #array(x,y,z)
 
     #comprobando la existencia de puntos
     if xyz.shape[0] == 0:
         raise RuntimeError("La nube de puntos esta vacía")
 
-    #recuperando los valores de los campos escalares
-    #key: nombre del campo escalar
-    #value: valores del campo escalar
+    #leyendo los campos escalares de la nube de puntos
     scalar_fields_names = [cloud.getScalarFieldName(i) for i in range(cloud.getNumberOfScalarFields())]
-    aux_dict = {}
+    aux_dict = {} #aux_dict = {key->nombre del campo escalar: value->valores del campo escalar}
     for idx, field_name in enumerate(scalar_fields_names):
         if field_name not in aux_dict.keys():
             aux_dict[field_name] = cloud.getScalarField(idx).asArray()
@@ -89,11 +88,11 @@ def getCloudAsArray(cloud):
     if cloud.colors() is not None:
         aux_dict['Red'], aux_dict['Green'], aux_dict['Blue'], _ = cloud.colors().T
 
-    #añadiendo todo al ndarray de salida
+    #añadiendo todo al array de salida
     for key, values in aux_dict.items():
         xyz = np.column_stack((xyz, np.array(values.astype(np.float64))))
 
-    #scalarFieldsNmaes puede darse el caso en el que sea una lista vacia
+    #scalarFieldsNames puede darse el caso en el que sea una lista vacia
     scalarFiledsNames = list(aux_dict.keys())
     return xyz, scalarFiledsNames
 
@@ -105,14 +104,16 @@ def makePyccPointCloudObject(cloud, scalar_fields, name='cloud'):
     _summary_:
         Permite convertir un array numpy a un objeto ccPointCloud
     Args:
-        cloud (ndarray(x,y,z)): nube de puntos como array numpy
+        cloud (array): nube de puntos como array numpy (x,y,z) o (x,y,z, scalarfields)
         scalar_fields(list): nombre de los campos escalares
         name(str, optional): nombre de la nube de puntos.
     Returns:
-        point_cloud(ccPointCloud()): nube de puntos como objeto ccPointCloud()
+        point_cloud(ccPointCloud): nube de puntos como objeto ccPointCloud()
     """
     #Init
+    #se comprueba que el array no este vacio y que tenga almenos las coordenadas tridimensionales
     if cloud.shape[0]==0 or cloud.shape[1]<3:
+        print("No se ha podido realizar la conversión de numpy array a ccPointCloud")
         return
 
     #Instanciando un objeto pointcloud de CloudCompare
@@ -129,25 +130,24 @@ def makePyccPointCloudObject(cloud, scalar_fields, name='cloud'):
         point_cloud.addScalarField("Zcoord", z)
         point_cloud.setCurrentDisplayedScalarField(point_cloud.getScalarFieldIndexByName("Zcoord"))
 
-    #añadiendo los demas campos escalares
+    #añadiendo los demás campos escalares
     if cloud.shape[1]>3:
         if len(scalar_fields)>0:
             for idx, field_name in enumerate(scalar_fields):
                 id = point_cloud.getScalarFieldIndexByName(field_name)
                 if id == -1:
-                    id = point_cloud.addScalarField(field_name, cloud[:,idx+3])
+                    id = point_cloud.addScalarField(field_name, cloud[:,idx+3]) #+3 porque las 3 primeras columnas de cloud son x,y,z
                     if id == -1:
                         raise RuntimeError("Failed to add ScalarField")
 
     #Calculo de valores mínimos y máximos de campos escalares
-    sfs = [point_cloud.getScalarFieldName(i) for i in range(point_cloud.getNumberOfScalarFields())]
-    for sf in sfs:
-        point_cloud.getScalarField(point_cloud.getScalarFieldIndexByName(sf)).computeMinAndMax()
+    for i in range(point_cloud.getNumberOfScalarFields()):
+        point_cloud.getScalarField(i).computeMinAndMax()
 
     return point_cloud
 
 
-#Union de nubes de puntos
+
 #@numba.njit no compatible con pycc
 def mergePointClouds(clouds, name_merge='merge_cloud'):
     """
@@ -157,23 +157,23 @@ def mergePointClouds(clouds, name_merge='merge_cloud'):
         clouds (list): lista de nubes de puntos como objetos pycc.ccPointCloud
         name_merge (str, optional): nombre de la nube de puntos resultado.
     Returns:
-        merge_result(ccPointCloud()): nube de puntos resultado de la unión
+        merge_result(ccPointCloud): nube de puntos resultado de la unión
     """
     #Init
     if len(clouds) ==0:
         raise RuntimeError("La lista de entrada esta vacía")
 
-    # nueva nube de puntos
+    #nueva nube de puntos
     total_num_points = sum(cloud.size() for cloud in clouds)
     merge_result = pycc.ccPointCloud(name_merge)
     merge_result.reserve(total_num_points)
 
-    # añadir cada punto a la nueva nube de puntos
-    for cloud_idx, cloud in enumerate(clouds):
+    #añadir cada punto a la nueva nube de puntos
+    for cloud in clouds:
         for point_idx in range(cloud.size()):
             merge_result.addPoint(cloud.getPoint(point_idx))
 
-    #configuración del campo escalar
+    #configuración de los campos escalares
     pos = 0
     for cloud in clouds:
         for i in range(cloud.getNumberOfScalarFields()):
@@ -195,14 +195,13 @@ def mergePointClouds(clouds, name_merge='merge_cloud'):
 
 
 
-#Obtención de grid (mallado)
 @numba.njit
 def makeGrid(cloud, cell_size):
     """
     _summary_:
         Permite obtener un grid de paso=cell_size que abarca la extension total de la nube de puntos en el plano 2D
     Args:
-        cloud (ndarray(x,y,z)): nube de puntos
+        cloud (array): nube de puntos como array numpy
         cell_size (int, float): tamaño de celda
     Returns:
         cells(array): lista de arrays donde cada array contiene los cuatro puntos que definen una celda.
@@ -212,20 +211,27 @@ def makeGrid(cloud, cell_size):
     if cloud.shape[0] == 0:
         raise RuntimeError("La nube de puntos esta vacía")
 
-    # extracción de coordenadas
+    #extracción de coordenadas x,y
     x = cloud[:,0]
     y = cloud[:,1]
 
-    # número de celdas en x e y
-    n_cell_x = int(np.ceil((x.max() - x.min()) / cell_size))
-    n_cell_y = int(np.ceil((y.max() - y.min()) / cell_size))
+    #coordenadas máximas y minimas en x e y
+    x_min, x_max, y_min, y_max = x.min(), x.max(), y.min(), y.max()
 
-    # límites de las celdas
-    cell_x = np.linspace(x.min(), x.max(), n_cell_x + 1)
-    cell_y = np.linspace(y.min(), y.max(), n_cell_y + 1)
+    #número de celdas en x e y
+    n_cell_x = int(np.ceil((x_max - x_min) / cell_size))
+    n_cell_y = int(np.ceil((y_max - y_min) / cell_size))
 
-    # array para almacenar los puntos que definen cada celda
+
+    #límites de las celdas
+    cell_x = np.linspace(x_min, x_max, n_cell_x + 1)
+    cell_y = np.linspace(y_min, y_max, n_cell_y + 1)
+
+
+    #array para almacenar los puntos que definen cada celda
     cells= np.empty((n_cell_x * n_cell_y, 4, 2))
+
+    #cálculo de los 4 puntos de cada celda
     count=0
     for i in range(n_cell_x):
         for j in range(n_cell_y):
@@ -244,18 +250,19 @@ def makeGrid(cloud, cell_size):
 
 
 
-#obtener nube de puntos por celda
+
 #@numba.njit no compatible con cKDTree
 def getCellPointCloud(xyz, cell_size):
     """
     _summary_:
-        Obtener nube de puntos por celda, la busqueda de vecinos se realiza mediante arbol cKDTree
+        Permite segmentar una nube de puntos por celdas de tamaño cell_size
+        la búsqueda de vecinos se realiza mediante arbol cKDTree
     Args:
-        xyz(ndarray(x,y,z)): nube de puntos
+        xyz(array): nube de puntos como array numpy
         cell_size (int, float): tamaño de celda
     Returns:
-        cells(array): lista de arrays, donde cada array contiene los cuatro puntos que definen una celda.
-        clouds(list): lista de nubes de puntos por celda en formato ndarray de numpy
+        cells(array): lista de arrays, donde cada array contiene los cuatro puntos que definen una celda
+        clouds(list): lista de nubes de puntos por celda en formato array de numpy
     """
     #Init
     #comprobando la existencia de puntos
@@ -268,7 +275,7 @@ def getCellPointCloud(xyz, cell_size):
     #Arbol KD en el plano 2D
     tree = cKDTree(xyz[:,:2])
 
-    #lista de nubes de puntos (una por celda)
+    #lista de nubes de puntos
     clouds = []
     for cell in cells:
         # Limites de cada celda
@@ -279,7 +286,7 @@ def getCellPointCloud(xyz, cell_size):
         d = ((cell_size/2)**2 + (cell_size/2)**2)**0.5
         indices = tree.query_ball_point([(x_min + x_max) / 2, (y_min + y_max) / 2], d, workers=-1)
 
-        #check
+        #comprobación de que la celda actual contenga puntos
         if len(indices) == 0:
             continue
 
@@ -297,7 +304,6 @@ def getCellPointCloud(xyz, cell_size):
 
 
 
-#obtener percentiles
 @numba.njit
 def getPercentil(data, percentil):
     """
@@ -317,15 +323,14 @@ def getPercentil(data, percentil):
 
 
 
-#Análisis de componentes principales (PCA)
 #@numba.njit
 def customPCA(cloud, nPC):
     """
     _summary_:
         Aplica Análisis de Componentes Principales (PCA) a la nube de puntos de entrada
     Args:
-        cloud (ndarray(x,y,z)): nube de puntos como array numpy
-        nPC (int): número de componentes
+        cloud (array): nube de puntos como array numpy
+        nPC (int): número de componentes a obtener
     Returns:
         eigenvalues: los nPC primeros autovalores del análisis
         eigenvectors: los nPC primeros autovectores del análisis
@@ -340,6 +345,8 @@ def customPCA(cloud, nPC):
     pca.fit(cloud)
     eigenvalues = pca.explained_variance_
     eigenvectors = pca.components_
+
+    #otra forma de hacerlo solo con numpy
     """
     m = np.mean(cloud, axis=0)
     cloud_norm = cloud - m
@@ -355,22 +362,37 @@ def customPCA(cloud, nPC):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #==============================================================================================================
-#==================================Funciones especificas para Rail detection===================================
+#========================== Funciones específicas para nubes de puntos de ferrocarril =========================
 #==============================================================================================================
 
-#Análisis de regresión lineal RANSAC
 #@numba.njit No compatible con RANSACRegressor()
-def customRansac(cloud):
+def customRansac(cloud, params):
     """
     _summary_:
         Regresion RANSAC para determinar puntos colineales en una nube de puntos con ruido
     Args:
-        cloud (ndarray(x,y,z)): nube de puntos
+        cloud (array): nube de puntos como array numpy
+        params (dict): diccionario de parametros para el ajuste RANSAC {min_samples, max_trials, loss, residual_threshold, stop_probability, random_state}
     Returns:
         inliers(array): máscara de puntos que estan sobre la recta de regresión
         outliers(array): máscara de puntos que no estan sobre la recta de regresión
-        m(float): pendiente de la recta de regresión
+        model(RANSACRegressor): objeto RANSACRegressor del modelo ajustado
     """
     #Init
     #comprobando la existencia de puntos
@@ -382,12 +404,12 @@ def customRansac(cloud):
     y = cloud[:, 1]
 
     # Modelo de regresión RANSAC
-    model_ransac = RANSACRegressor(min_samples=2,
-                                    max_trials=100,
-                                    loss='absolute_error',
-                                    residual_threshold=0.03,
-                                    stop_probability=0.99,
-                                    random_state=123)
+    model_ransac = RANSACRegressor(min_samples=params['min_samples'],
+                                    max_trials=params['max_trials'],
+                                    loss=params['loss'],
+                                    residual_threshold=params['residual_threshold'],
+                                    stop_probability=params['stop_probability'],
+                                    random_state=params['random_state'])
     #Ajuste del modelo RANSAC
     model_ransac.fit(x[:, np.newaxis], y)
 
@@ -395,38 +417,46 @@ def customRansac(cloud):
     inliers = model_ransac.inlier_mask_
     outliers = np.logical_not(inliers)
 
-    #pendiente de la recta de regresión
-    m = model_ransac.estimator_.coef_[0]
-    return inliers, outliers, m
+    return inliers, outliers, model_ransac
 
 
 
 
-#Obtener puntos potenciales de ser de carril en una nube de puntos
-@numba.njit
-def getTrackPoints(clouds):
+#Obtener puntos de rail en una nube de puntos
+def getTrackPoints(clouds, scalarFields):
     """
     _summary_:
         Filtrar los puntos de carril de vias ferreas presentes en una nube de puntos
     Args:
-        clouds(list): lista con nubes de puntos de la forma ndarray(x,y,z,scalarfields)
+        clouds(list): lista con nubes de puntos de la forma array(x,y,z,scalarfields)
+        scalarFields (list): lista python con los nombres de los campos escalares de la nube de puntos
     Returns:
-        track_clouds(list): lista con nubes de puntos de la forma ndarray(x,y,z, scalarfields)
+        track_point_cloud(array): nube de puntos de la forma array(x,y,z, scalarfields)
+        scalarFields(list): nombre de campos escalares
     """
     #Init
     #comprobando los datos de entrada
     if len(clouds) == 0 or not isinstance(clouds, list):
         raise RuntimeError("la entrada debe ser una lista de nube de puntos no vacía")
 
-    # lista de salida
-    track_clouds = []
-    for cell_points in clouds:
-        #Trabajamos con celdas que tengan más de 20 puntos (esto puede cambiarse)
-        if cell_points.shape[0] > 20:
+
+    #función para la detección de puntos de rail optimizada con numba
+    @numba.njit
+    def compute (clouds):
+        # lista de nubes de puntos de salida, filtradas por histogramas de altura
+        track_clouds = []
+        for cell_points in clouds:
+            #============================================================================================
+            #=============================Filtrado por histogramas de altura=============================
+            #============================================================================================
+            #Trabajamos con celdas que tengan más de 20 puntos (esto puede cambiarse)
+            if cell_points.shape[0] < 20:
+                continue
+
             #Percentil 10% de altura en cada celda
             mdt = getPercentil(cell_points[:, 2], 10)
 
-            ##Condicion 1
+        ##Condicion 1
             #Verificación de que menos del 10% de puntos se situen entre mdt+0.5 y mdt+4.5
             mask_1 = np.where((cell_points[:, 2] >= mdt+0.5) & (cell_points[:, 2] <= mdt+4.5))
             condition1 = (cell_points[mask_1].shape[0] / cell_points.shape[0])*100 #Porcentaje de puntos entre [mdt+0.5 , mdt+4.5]
@@ -436,7 +466,7 @@ def getTrackPoints(clouds):
                 ground_points = cell_points[mask_2]
 
             ##Condicion 2
-                #Percentiles de altura
+                #Percentiles de altura (p10: 10% y p98: 98%)
                 p10 = getPercentil(ground_points[:, 2], 10)
                 p98 = getPercentil(ground_points[:, 2], 98)
                 condition2 = p98-p10
@@ -446,15 +476,109 @@ def getTrackPoints(clouds):
                     mask_3 = np.where((ground_points[:, 2] > p98-0.10) & (ground_points[:, 2] < p98))
                     track_points = ground_points[mask_3]
 
-            ##Condicion 3
+                ##Condicion 3
                     #Si los puntos que estan entre (p98-0.10 , p98) son menos del 50% respecto a los ground_points,
-                    #estos puntos son potencialmente puntos de riel
+                    #estos puntos son potencialmente puntos de rail
                     condition3 = (track_points.shape[0] / ground_points.shape[0])*100
                     if condition3 < 50:
                         #nos quedamos con las celdas con más de 10 puntos
                         if track_points.shape[0] > 10:
                             track_clouds.append(track_points)
-    return track_clouds
+        return track_clouds
+        #============================================================================================
+        #===========================Fin filtrado por histograma de altura============================
+        #============================================================================================
+
+    #detección inicial de puntos de rail (condiciones 1, 2 y 3)
+    initial_tracks = compute(clouds)
+
+    #============================================================================================
+    #===================================Ajuste local RANSAC======================================
+    #============================================================================================
+    #Init
+    #array numpy vacio con el mismo número de columnas que los arrays en track_clouds
+    f = initial_tracks[0].shape[1]
+    track_point_cloud = np.empty((0, f+1)) #+1 porque dentro del bucle for a continuación, se añade una columna más al array (direction de la recta de regresión)
+
+    #iteramos para hacer un ajuste RANSAC por celdas y obtener los inliers del modelo ajustado
+    for track_points in initial_tracks:
+        #Ajuste RANSAC
+        params_ransac = {'min_samples':2, 'max_trials':100, 'loss':'absolute_error', 'residual_threshold':0.03, 'stop_probability':0.99, 'random_state':123}
+        inliers, _, model = customRansac(cloud=track_points, params=params_ransac)
+        m = model.estimator_.coef_[0] # pendiente de la recta de regresión
+
+    ##Condición 4
+        #Si los puntos inliers del modelo RANSAC son más del 90% nos quedamos con ellos
+        condition4 = (inliers.shape[0] / track_points.shape[0])*100
+        if condition4 > 90.0:
+            #filtrar en cada celda los inliers con la mascara de inliers del modelo RANSAC
+            track_points = track_points[inliers]
+
+            #añadiendo la dirección de la recta de regresión a la nube de puntos como un atributo más
+            direction = np.full(shape=(track_points.shape[0]), fill_value=m)
+            track_points = np.append(track_points, np.expand_dims(direction, axis=1), 1)
+
+            #guardando el resultado en el array vacio inicializado anteriormente
+            track_point_cloud = np.vstack((track_point_cloud, track_points))
+    #============================================================================================
+    #=================================Fin ajuste local RANSAC====================================
+    #============================================================================================
+
+    #actualización de los nombres de los campos escalares
+    scalarFields.append("RANSAC_Direction")
+
+    #eliminando puntos duplicados
+    track_point_cloud = np.unique(track_point_cloud, axis=0)
+
+    #============================================================================================
+    #===============Filtrado por planariedad, variación local de Z y densidad de Z===============
+    #============================================================================================
+
+    #índices de posición de las caracteristicas planarity y Z_std en la lsita de nombres de los campos escalares
+    plan_idx = scalarFields.index('planarity') + 3 #+3 porque las 3 primeras posiciones en las nubes de puntos son las coorenadas x,y,z
+    Zstd_idx = scalarFields.index('Z_std') + 3
+
+    #filtrado de puntos por planarity y Z_std
+    #se filtran los puntos que esten a menos de la media de la distribución normal ajustada a los valores de planarity
+    mu0, _ = stats.norm.fit(track_point_cloud[:, plan_idx])
+    mask1 = track_point_cloud[:, plan_idx] <= mu0
+
+    #filtrado de puntos que esten entre la media y +- la desviación típica de la distribución normal ajustada a los valores de Z_std
+    mu1, sigma1 = stats.norm.fit(track_point_cloud[:, Zstd_idx])
+    mask2 = (track_point_cloud[:, Zstd_idx] >= mu1-sigma1) & (track_point_cloud[:, Zstd_idx] <= mu1+sigma1)
+
+    #filtrado de puntos por coordenada Z
+    #se filtran los puntos que esten entre la media y -+ 2 veces la desviación típica de la distribución normal ajustada a los valores de altura
+    mu2, std2 = stats.norm.fit(track_point_cloud[:,2])
+    mask3 = (track_point_cloud[:,2] >= mu2 - 2*std2) & (track_point_cloud[:,2] <= mu2 + 2*std2)
+
+    #obtención de los puntos que cumplen con los 3 filtros anteriores
+    track_point_cloud = track_point_cloud[mask1 & mask2 & mask3]
+
+    #============================================================================================
+    #=============Fin Filtrado por planariedad, variación local de Z y densidad de Z=============
+    #============================================================================================
+
+    return track_point_cloud, scalarFields
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -464,21 +588,20 @@ def getTrackPoints(clouds):
 
 
 #==============================================================================================================
-#========================================Funciones especificas para RPAS=======================================
+#============================= Funciones especificas para nubes de puntos de RPAS =============================
 #==============================================================================================================
 
-#Filtro (geométrico) de puntos de terreno natural con Cloth Simulation Filter (CSF)
 #@numba.njit no compatible con pycc
 def filterCSF(clouds, params):
     """
     _summary_:
-        Filtrado geométrico de puntos de terreno natural con el algoritmo Cloth Simulation Filter
+        Filtrado geométrico de puntos de terreno natural con el algoritmo Cloth Simulation Filter (CSF)
     Args:
-        clouds (list): lista de nubes de puntos ndarray(x,y,z)
-        params (list): lista de parametros [bSloopSmooth, class_threshold, cloth_resolution, rigidness, interations]
+        clouds (list): lista de nubes de puntos array(x,y,z)
+        params (dict): diccionario de parametros para CSF {bSloopSmooth, class_threshold, cloth_resolution, rigidness, interations}
     Returns:
-        ground_point_clouds(ndarray): nube de puntos (ndarray) de terreno natural
-        n_ground_point_clouds(ndarray): nubes de puntos (ndarray) de objetos sobre el terreno natural
+        ground_point_clouds(array): nube de puntos (array) de terreno natural
+        n_ground_point_clouds(array): nubes de puntos (array) de objetos sobre el terreno natural
     """
     #Init
     if len(clouds) == 0 or not isinstance(clouds, list):
@@ -488,16 +611,18 @@ def filterCSF(clouds, params):
     csf = CSF.CSF()
 
     #parametros del algoritmo
-    csf.params.bSloopSmooth = params[0]    # manejar pendientes pronunciadas después de la simulación
-    csf.params.class_threshold = params[1] # umbral de clasificación puntos terreno y no terreno
-    csf.params.cloth_resolution = params[2]# resolución de la tela
-    csf.params.rigidness = params[3]       # 1)montaña y vegetacion densa, 2)escenas complejas, 3)terrenos planos con edificios altos
-    csf.params.interations = params[4]     # numero de iteraciones
+    csf.params.bSloopSmooth = params['bSloopSmooth']        # manejar pendientes pronunciadas después de la simulación
+    csf.params.class_threshold = params['class_threshold']  # umbral de clasificación puntos terreno y no terreno
+    csf.params.cloth_resolution = params['cloth_resolution']# resolución de la tela
+    csf.params.rigidness = params['rigidness']              # 1)montaña y vegetacion densa, 2)escenas complejas, 3)terrenos planos con edificios altos
+    csf.params.interations = params['interations']          # numero de iteraciones
 
-    #filtramos por celdas
+    #arrays vacios que contendrán lo puntos de terreno y no terreno
     f = clouds[0].shape[1]
     ground_point_clouds = np.empty((0,f))
     n_ground_point_clouds = np.empty((0,f))
+
+    #filtramos con CSF por celdas
     for cloud in clouds:
         #nubes de puntos con menos de 10 puntos las saltamos
         if cloud.shape[0] < 10:
@@ -509,7 +634,7 @@ def filterCSF(clouds, params):
         idx_n_ground = CSF.VecInt()           # una lista para indicar el índice de puntos no terrestres después del cálculo
         csf.do_filtering(idx_ground, idx_n_ground)# filtrado
 
-        #Indices de puntos terreno y no terreno
+        #índices de puntos terreno y no terreno
         idx_ground_array = np.array(idx_ground).astype(int)
         idx_n_ground_array = np.array(idx_n_ground).astype(int)
 
@@ -523,21 +648,21 @@ def filterCSF(clouds, params):
             n_ground_points = cloud[idx_n_ground_array]
             n_ground_point_clouds = np.vstack((n_ground_point_clouds, n_ground_points))
 
+    #retorno sin puntos repetidos
     return np.unique(ground_point_clouds, axis=0), np.unique(n_ground_point_clouds, axis=0)
 
 
 
 
 
-#Otención de indices espectrales de vegetación con los campos escalares RGB
 #@numba.njit no compatible con diccionarios python
 def getSpectralInfo(cloud, scalarfields):
     """
     _summary_:
-        Obtención de indices espectrales de vegetación a partir de los campos escalares R,G,B
+        Obtención de índices espectrales de vegetación a partir de los campos escalares R,G,B
     Args:
-        cloud (ndarray): nube de puntos como objeto ndarray de numpy
-        scalarfields (list): lista python con el nombre de los campos escalares de la nube de puntos
+        cloud (array): nube de puntos como array numpy
+        scalarfields (list): lista con el nombre de los campos escalares de la nube de puntos
     Returns:
         cloud(array): array numpy de la forma (x,y,z, scalarfields)
         scalarFieldsNames(list): nombre de campos escalares
@@ -548,7 +673,7 @@ def getSpectralInfo(cloud, scalarfields):
 
     #Si no hay R,G,B. se devuelve la nube de puntos de entrada
     if ('Red' not in scalarfields) or ('Green' not in scalarfields) or ('Blue' not in scalarfields):
-        print("No ha sido posible calcular índices espectrales. La nube de puntos no está coloreada en RGB.")
+        print("No ha sido posible calcular índices espectrales.\nLa nube de puntos no está coloreada en RGB.")
         return cloud, scalarfields
 
     #Obteniendo los valores de R,G,B de cada punto
@@ -646,16 +771,15 @@ def getSpectralInfo(cloud, scalarfields):
 
 
 
-#Otención de caracteristicas geométricas basadas en el vecindario de cada punto
 #@numba.njit no compatible con cKDTree
 def getGeometricalInfo(cloud, globalScalarfields, n):
     """
     _summary_:
-        Obtención de caracteristicas geométricas basadas en el vecindario de cada punto de la nube de puntos
+        Obtención de caracteristicas geométricas basadas en el vecindario de un punto
     Args:
-        cloud (ndarray): nube de puntos como objeto ndarray de numpy
-        globalScalarfields (list): lista python con el nombre de los campos escalares de la nube de puntos
-        n(int): número de vecinos cercanos
+        cloud (array): nube de puntos como array numpy
+        globalScalarfields (list): lista con el nombre de los campos escalares de la nube de puntos
+        n(int): tamaño del vecindario para el cálculo de caracteristicas
     Returns:
         cloud_out(array): array numpy de la forma (x,y,z, scalarfields)
         scalarfields(list): nombre de campos escalares
@@ -672,7 +796,7 @@ def getGeometricalInfo(cloud, globalScalarfields, n):
     @numba.njit()
     def compute(cloud, indices, scalarfields):
 
-        #Lista para almacenar los puntos de salida
+        #Lista numba para almacenar los puntos de salida
         cloud_out_list = numba.typed.List.empty_list(numba.float64[:])
 
         #iteramos la nube de puntos para obtener las nuevas caracteristicas a partir del vecindario de cada punto
@@ -763,7 +887,7 @@ def getGeometricalInfo(cloud, globalScalarfields, n):
 
         return cloud_out_list, scalarfields
 
-    #Obtención de árbol cKD en el espacio 3D
+    #Obtención de árbol KD en el espacio 3D
         #leafsize: número de puntos por partición
         #compact_nodes: para reducir los hiperrectangulos al rango de datos real (consultas más rápidas)
         #balanced_tree: para usar en las particiones la mediana  y no la media (consultas más rápidas)
@@ -792,7 +916,7 @@ def getGeometricalInfo(cloud, globalScalarfields, n):
 
 
 
-#Clsificación no supervisada con GMM
+#Clasificación no supervisada con GMM
 #@numba.njit no compatible con RobustScaler y GaussianMixture
 def clusteringGMM(cloud, globalScalarFieldsNames, cell_size):
     """
@@ -804,8 +928,8 @@ def clusteringGMM(cloud, globalScalarFieldsNames, cell_size):
         mediante las caracteristicas geométricas, la intensidad de retorno y el número de retornos, con ello, los resultados
         pueden no ser adecuados.
     Args:
-        cloud (ndarray): nube de puntos como objeto ndarray de numpy
-        globalScalarFieldsNames (list): lista python con el nombre de los campos escalares de la nube de puntos
+        cloud (array): nube de puntos como array de numpy
+        globalScalarFieldsNames (list): lista con el nombre de los campos escalares de la nube de puntos
         cell_size(int, float): tamaño de ventana de análisis
     Returns:
         cloud_ground_gmm(array): array numpy de la forma (x,y,z, scalarfields)
@@ -841,10 +965,10 @@ def clusteringGMM(cloud, globalScalarFieldsNames, cell_size):
     #se usan estas variables, porque son donde el cluster de puntos de terreno toma un valor medio mínimo o máximo en comparación al resto de clusters
     minimos_in = [name for name in ['ExG', 'EXG', 'vNDVI', 'GLI', 'SAVI', 'VARI', 'GR', 'NBRDI', 'NGBDI', 'NormG', 'NGRDI_mean', 'NGRDI_std', 'Z_std', 'planarity', 'sphericity', 'omnivarianza', 'surface_variation'] if name in existingAttributes]
     maximos_in = [name for name in ['EXR', 'RGRI', 'CIVE', 'anisotropy'] if name in existingAttributes]
-    names = minimos_in + maximos_in
+    names_ground = minimos_in + maximos_in
 
     #comprobación de la existencia de caracteristicas para la selección de cluster terreno
-    if len(names) == 0:
+    if len(names_ground) == 0:
         raise RuntimeError("la nube de puntos no tiene las características utilizadas en la selección del cluster de puntos de terreno")
 
     #============================================================================================
@@ -910,9 +1034,9 @@ def clusteringGMM(cloud, globalScalarFieldsNames, cell_size):
         #================================Fin proceso de clasificación================================
         #============================================================================================
 
-    #D-)filtrado de puntos por probabilidades
+    #D-)filtrado de puntos por probabilidad
         #definimos un umbral de probabilidad mínima para descartar puntos con una mala asignación a una clase
-        #puntos con una probabilidad de pertenencia a un cluster menor que 60% se descarta
+        #puntos con una probabilidad de pertenencia a un cluster menor que 60% se descartan
         mask = cloud[:,-1] >= 0.6
         cloud = cloud[mask]
 
@@ -920,7 +1044,7 @@ def clusteringGMM(cloud, globalScalarFieldsNames, cell_size):
         #===========================Proceso de selección de cluster terreno==========================
         #============================================================================================
         #dic es una variable auxiliar que almacena:
-            #key: cada variable existente en la lista names (names = minimos_in + maximos_in)
+            #key: cada variable existente en la lista names_ground (names_ground = minimos_in + maximos_in)
             #value: lista de valores medios de la distribución normal ajustada a los datos de cada key
         dic ={}
 
@@ -933,8 +1057,8 @@ def clusteringGMM(cloud, globalScalarFieldsNames, cell_size):
             cluster = cloud[mask]
 
             #obtención del valor medio de la distribución normal ajustada a los datos de cada variable
-            for name in names:
-                #obtención del indice de cada variable de la lista names
+            for name in names_ground:
+                #obtención del indice de cada variable name en la lista de campos escalares
                 var_idx = globalScalarFieldsNames.index(name) + 3
 
                 #calculo de estadisticos, para la selección del cluster de puntos terreno
@@ -957,7 +1081,7 @@ def clusteringGMM(cloud, globalScalarFieldsNames, cell_size):
         clusters = min_indices + max_indices
 
         #número de cluster seleccionado como terreno
-        #se selecciona aquel número de cluster más frecuente entre los candidatos (moda de la lista de indices)
+        #se selecciona aquel número de cluster más frecuente entre los candidatos (moda de la lista de índices)
         clase = stats.mode(clusters).mode
 
         #filtrado de puntos por número de cluster
