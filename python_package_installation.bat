@@ -38,7 +38,7 @@ echo "===================================================="
 echo "==================Instalando numba=================="
 echo "===================================================="
 echo .
-%PYTHON_EXECUTABLE% -m pip install numba --target=%TARGET_DIR%
+%PYTHON_EXECUTABLE% -m pip install numba==0.60.0 --target=%TARGET_DIR%
 echo .
 
 
@@ -49,7 +49,7 @@ echo "===================================================="
 echo "=========Instalando cloth-simulation-filter========="
 echo "===================================================="
 echo .
-%PYTHON_EXECUTABLE% -m pip install cloth-simulation-filter --target=%TARGET_DIR%
+%PYTHON_EXECUTABLE% -m pip install cloth-simulation-filter==1.1.5 --target=%TARGET_DIR%
 echo.
 
 
